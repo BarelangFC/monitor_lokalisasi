@@ -1,0 +1,562 @@
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Int32
+from std_msgs.msg import Float64MultiArray
+from nav_msgs.msg import Odometry
+from geometry_msgs.msg import PoseStamped
+from bfc_msgs.msg import Button
+from bfc_msgs.msg import Coordination
+from sensor_msgs.msg import Imu
+
+import cv2
+import numpy as np
+import time
+import math
+
+
+
+class monitor_lokalisasi(Node):
+    def __init__(self):
+        super().__init__("monitor_lokalisasi_nodes")
+        self.create_timer(0.5, self.timer_callback)
+        self.publisher = [self.create_publisher(Odometry, f'/robot_{idx+1}/odom', 10) for idx in range(3)]
+        self.create_subscription(Odometry, '/robot_1/pose', self.pose_callback_robot_1, 10)
+        self.create_subscription(Odometry, '/robot_1/pose', self.pose_callback_robot_1_new, 10)
+        self.create_subscription(Odometry, '/robot_2/pose', self.pose_callback_robot_2, 10)
+        self.create_subscription(Odometry, '/robot_2/pose', self.pose_callback_robot_2_new, 10)
+        self.create_subscription(Odometry, '/robot_3/pose', self.pose_callback_robot_3, 10)
+        self.create_subscription(Odometry, '/robot_3/pose', self.pose_callback_robot_3_new, 10)
+        self.create_subscription(Odometry, '/robot_4/pose', self.pose_callback_robot_4, 10)
+        self.create_subscription(Odometry, '/robot_4/pose', self.pose_callback_robot_4_new, 10)
+        self.create_subscription(Odometry, '/robot_5/pose', self.pose_callback_robot_5, 10)
+
+        self.create_subscription(Button, '/robot_1/button', self.button_status_robot_1, 10)
+        self.create_subscription(Button, '/robot_2/button', self.button_status_robot_2, 10)
+        self.create_subscription(Button, '/robot_3/button', self.button_status_robot_3, 10)
+        self.create_subscription(Button, '/robot_4/button', self.button_status_robot_4, 10)
+        self.create_subscription(Button, '/robot_5/button', self.button_status_robot_5, 10)
+
+
+        self.create_subscription(Coordination, '/robot_1/coordination', self.robot_1_ball_status, 10)
+        self.create_subscription(Coordination, '/robot_2/coordination', self.robot_1_ball_status, 10)
+        self.create_subscription(Coordination, '/robot_3/coordination', self.robot_1_ball_status, 10)
+        self.create_subscription(Coordination, '/robot_4/coordination', self.robot_1_ball_status, 10)
+        self.create_subscription(Coordination, '/robot_5/coordination', self.robot_1_ball_status, 10)
+
+        self.create_subscription(PoseStamped, '/zedm/zed_node/pose', self.pose_callback_zed, 10)
+        self.create_subscription(Imu, '/zedm/zed_node/imu/data', self.velo_callback_zed, 10)
+
+        self.robot_1_ball = 0
+        self.robot_2_ball = 0
+        self.robot_3_ball = 0
+        self.robot_4_ball = 0
+        self.robot_5_ball = 0
+        
+        self.robot_1_PosX = 0
+        self.robot_1_PosY = 0
+        self.robot_1_PosX_new = 0
+        self.robot_1_PosY_new = 0
+
+        self.robot_2_PosX = 0
+        self.robot_2_PosY = 0
+        self.robot_2_PosX_new = 0
+        self.robot_2_PosY_new = 0
+
+        self.robot_3_PosX = 0
+        self.robot_3_PosY = 0
+        self.robot_3_PosX_new = 0
+        self.robot_3_PosY_new = 0
+
+        self.robot_4_PosX = 0
+        self.robot_4_PosY = 0
+        self.robot_4_PosX_new = 0
+        self.robot_4_PosY_new = 0
+
+        self.robot_5_PosX = 0
+        self.robot_5_PosY = 0
+
+        self.robot_1_kill = 10
+        self.robot_1_strategy = 10
+        self.robot_2_kill = 10
+        self.robot_2_strategy = 10
+        self.robot_3_kill = 10
+        self.robot_3_strategy = 10
+        self.robot_4_kill = 10
+        self.robot_1_strategy = 10
+        self.robot_4_strategy = 10
+        self.robot_5_kill = 10
+        self.robot_5_strategy = 10
+
+        # randomly initialize robot positions
+        #self.robot1_pos = (self.robot_1_PosX_new, self.robot_1_PosY_new)
+        #self.robot2_pos = (self.robot_4_PosX_new, self.robot_4_PosY_new)
+        #self.robot3_pos = (self.robot_3_PosX_new, self.robot_3_PosY_new)
+
+        self.zed_pos_X = 0
+        self.zed_pos_Y = 0
+        self.zed_x_imu = 0
+        self.zed_y_imu = 0
+
+
+
+
+        self.mapImage = np.zeros((800,1100,3), np.uint8)
+        self.robotInitialPosition = np.zeros((3))
+
+    def worldCoorToImageCoor(self, x, y):		
+         x = x + 100				
+         y = y + 100		
+         return int(x), int(y)
+    
+    def button_status_robot_1(self, msg):
+        self.robot_1_kill = msg.kill
+        self.robot_1_strategy = msg.strategy
+
+    def button_status_robot_2(self, msg):
+        self.robot_2_kill = msg.kill
+        self.robot_2_strategy = msg.strategy
+
+    def button_status_robot_3(self, msg):
+        self.robot_3_kill = msg.kill
+        self.robot_3_strategy = msg.strategy
+
+    def button_status_robot_4(self, msg):
+        self.robot_4_kill = msg.kill
+        self.robot_4_strategy = msg.strategy
+
+    def button_status_robot_5(self, msg):
+        self.robot_5_kill = msg.kill
+        self.robot_5_strategy = msg.strategy
+
+    def pose_callback_robot_1(self, msg):
+        self.robot_1_PosX = msg.pose.pose.position.x
+        self.robot_1_PosY = msg.pose.pose.position.y
+
+    def pose_callback_robot_2(self, msg):
+        self.robot_2_PosX = msg.pose.pose.position.x
+        self.robot_2_PosY = msg.pose.pose.position.y
+
+    def pose_callback_robot_3(self, msg):
+        self.robot_3_PosX = msg.pose.pose.position.x
+        self.robot_3_PosY = msg.pose.pose.position.y
+
+    def pose_callback_robot_4(self, msg):
+        self.robot_4_PosX = msg.pose.pose.position.x
+        self.robot_4_PosY = msg.pose.pose.position.y
+
+    def pose_callback_robot_5(self, msg):
+        self.robot_5_PosX = msg.pose.pose.position.x
+        self.robot_5_PosY = msg.pose.pose.position.y
+
+    def pose_callback_robot_1_new(self, msg):
+        self.robot_1_PosX_new = msg.pose.pose.position.x
+        self.robot_1_PosY_new = msg.pose.pose.position.y
+
+    def pose_callback_robot_2_new(self, msg):
+        self.robot_2_PosX_new = msg.pose.pose.position.x
+        self.robot_2_PosY_new = msg.pose.pose.position.y
+
+    def pose_callback_robot_3_new(self, msg):
+        self.robot_3_PosX_new = msg.pose.pose.position.x
+        self.robot_3_PosY_new = msg.pose.pose.position.y
+
+    def pose_callback_robot_4_new(self, msg):
+        self.robot_4_PosX_new = msg.pose.pose.position.x
+        self.robot_4_PosY_new = msg.pose.pose.position.y
+
+    def robot_1_ball_status(self, msg):
+        self.robot_1_ball = msg.found_ball
+
+    def robot_2_ball_status(self, msg):
+        self.robot_2_ball = msg.found_ball
+
+    def robot_3_ball_status(self, msg):
+        self.robot_3_ball = msg.found_ball
+
+    def robot_4_ball_status(self, msg):
+        self.robot_4_ball = msg.found_ball
+
+    def robot_5_ball_status(self, msg):
+        self.robot_5_ball = msg.found_ball
+
+    def pose_callback_zed(self, msg):
+        self.zed_pos_X = msg.pose.position.x 
+        self.zed_pos_Y = msg.pose.position.y
+    
+    def velo_callback_zed(self, msg):
+        self.zed_x_imu = msg.linear_acceleration.x 
+        self.zed_y_imu = msg.linear_acceleration.y 
+
+    # def pub_move_robots(self, max_distance, min_distance):
+    #     robot1_x, robot1_y = self.robot_4_PosX_new, self.robot_4_PosY_new
+    #     robot2_x, robot2_y = self.robot_2_PosX_new, self.robot_2_PosY_new
+    #     robot3_x, robot3_y = self.robot_3_PosX_new, self.robot_3_PosY_new
+
+    #     # calculate distance from robot2 and robot3 to robot1
+    #     distance1 = ((robot1_x - robot2_x) ** 2 + (robot1_y - robot2_y) ** 2) ** 0.5
+    #     distance2 = ((robot1_x - robot3_x) ** 2 + (robot1_y - robot3_y) ** 2) ** 0.5
+
+    #     # move robot2 and robot3 towards robot1 if they are too far away
+    #     if distance1 > max_distance:
+    #         direction1_x, direction1_y = robot1_x - robot2_x, robot1_y - robot2_y 
+    #         direction1_norm = ((direction1_x) ** 2 + (direction1_y) ** 2) ** 0.5
+    #         robot2_x, robot2_y = robot1_x - direction1_x / direction1_norm * max_distance, robot1_y - direction1_y / direction1_norm * max_distance
+
+    #     if distance2 > max_distance:
+    #         direction2_x, direction2_y = robot1_x - robot3_x, robot1_y - robot3_y
+    #         direction2_norm = ((direction2_x) ** 2 + (direction2_y) ** 2) ** 0.5
+    #         robot3_x, robot3_y = robot1_x - direction2_x / direction2_norm * max_distance, robot1_y - direction2_y / direction2_norm * max_distance
+
+    #     # check for collision between robot1 and the other robots
+    #     distance3 = ((robot1_x - robot2_x) ** 2 + (robot1_y - robot2_y) ** 2) ** 0.5
+    #     distance4 = ((robot1_x - robot3_x) ** 2 + (robot1_y - robot3_y) ** 2) ** 0.5
+    #     if distance3 < min_distance:
+    #         # adjust position of robot1 to move it away from robot2
+    #         direction3_x, direction3_y = robot1_x - robot2_x, robot1_y - robot2_y
+    #         direction3_norm = ((direction3_x) ** 2 + (direction3_y) ** 2) ** 0.5
+    #         robot1_x, robot1_y = robot2_x + direction3_x / direction3_norm * min_distance, robot2_y + direction3_y / direction3_norm * min_distance
+
+    #     if distance4 < min_distance:
+    #         # adjust position of robot1 to move it away from robot3
+    #         direction4_x, direction4_y = robot1_x - robot3_x, robot1_y - robot3_y
+    #         direction4_norm = ((direction4_x) ** 2 + (direction4_y) ** 2) ** 0.5
+    #         robot1_x, robot1_y = robot3_x + direction4_x / direction4_norm * min_distance, robot3_y + direction4_y / direction4_norm * min_distance
+
+    #     # check for collision between robot2 and robot3
+    #     distance5 = ((robot2_x - robot3_x) ** 2 + (robot2_y - robot3_y) ** 2) ** 0.5
+    #     if distance5 < min_distance:
+    #         # adjust positions of robot2 and robot3 to move them away from each other
+    #         direction5_x, direction5_y = robot2_x - robot3_x, robot2_y - robot3_y
+    #         direction5_norm = ((direction5_x) ** 2 + (direction5_y) ** 2) ** 0.5
+    #         robot2_x, robot2_y = robot2_x + direction5_x / direction5_norm * (min_distance - distance5) / 2, robot2_y + direction5_y / direction5_norm * (min_distance - distance5) / 2
+    #         robot3_x, robot3_y = robot3_x - direction5_x / direction5_norm * (min_distance - distance5) / 2, robot3_y - direction5_y / direction5_norm * (min_distance - distance5) / 2
+
+    #     # create Odometry messages for each robot
+    #     robots_odom = [Odometry(), Odometry(), Odometry()]
+
+    #     for idx, (x, y) in enumerate([(robot1_x, robot1_y), (robot2_x, robot2_y), (robot3_x, robot3_y)]):
+    #         robots_odom[idx].header.stamp = self.get_clock().now().to_msg()
+    #         robots_odom[idx].header.frame_id = f'odom_robot{idx+1}'
+    #         robots_odom[idx].child_frame_id = f'base_link_robot{idx+1}'
+    #         robots_odom[idx].pose.pose.position.x = float(x)
+    #         robots_odom[idx].pose.pose.position.y = float(y)
+    #         robots_odom[idx].pose.pose.position.z = float(0)
+    #         robots_odom[idx].pose.pose.orientation.x = float(x)
+    #         robots_odom[idx].pose.pose.orientation.y = float(y)
+    #         robots_odom[idx].pose.pose.orientation.z = float(0)
+    #         robots_odom[idx].pose.pose.orientation.w = float(1)
+
+    #     # publish the updated robot positions as Odometry messages
+    #     for idx, odom_msg in enumerate(robots_odom):
+    #         self.publisher[idx].publish(odom_msg)
+
+    #     return (robot1_x, robot1_y), (robot2_x, robot2_y), (robot3_x, robot3_y)
+
+    def pub_move_robots(self, max_distance, min_distance):
+
+        robot1_x, robot1_y = 0, 0
+        robot2_x, robot2_y = 0, 0
+        robot3_x, robot3_y = 0, 0
+        
+        if self.robot_1_ball > self.robot_2_ball or self.robot_1_ball > self.robot_3_ball:
+            robot1_x, robot1_y = self.robot_1_PosX_new, self.robot_1_PosY_new
+            robot2_x, robot2_y = self.robot_2_PosX_new, self.robot_2_PosY_new
+            robot3_x, robot3_y = self.robot_3_PosX_new, self.robot_3_PosY_new
+
+        elif self.robot_2_ball > self.robot_1_ball or self.robot_2_ball > self.robot_3_ball:
+            robot1_x, robot1_y = self.robot_2_PosX_new, self.robot_2_PosY_new
+            robot2_x, robot2_y = self.robot_1_PosX_new, self.robot_1_PosY_new
+            robot3_x, robot3_y = self.robot_3_PosX_new, self.robot_3_PosY_new
+
+        elif self.robot_4_ball > self.robot_1_ball or self.robot_4_ball > self.robot_2_ball:
+            robot1_x, robot1_y = self.robot_4_PosX_new, self.robot_4_PosY_new
+            robot2_x, robot2_y = self.robot_2_PosX_new, self.robot_2_PosY_new
+            robot3_x, robot3_y = self.robot_1_PosX_new, self.robot_1_PosY_new
+
+        else:
+            robot1_x, robot1_y = -100, 0
+            robot2_x, robot2_y = -200, 150
+            robot3_x, robot3_y = -200, -150
+
+        # calculate distance from robot2 and robot3 to robot1
+        distance1 = ((robot1_x - robot2_x) ** 2 + (robot1_y - robot2_y) ** 2) ** 0.5
+        distance2 = ((robot1_x - robot3_x) ** 2 + (robot1_y - robot3_y) ** 2) ** 0.5
+
+        # move robot2 and robot3 towards/away from robot1 if they are too far/close
+        direction1_norm = 0  # initialize to default value
+        direction2_norm = 0  # initialize to default valu3
+
+        if distance1 > max_distance:
+            direction1_x, direction1_y = robot1_x - robot2_x, robot1_y - robot2_y 
+            direction1_norm = ((direction1_x) ** 2 + (direction1_y) ** 2) ** 0.5
+            if direction1_norm > 0: 
+                robot2_x, robot2_y = robot1_x - direction1_x / direction1_norm * max_distance, robot1_y - direction1_y / direction1_norm * max_distance
+        elif distance1 < min_distance:
+            direction1_x, direction1_y = robot2_x - robot1_x, robot2_y - robot1_y
+            direction1_norm = ((direction1_x) ** 2 + (direction1_y) ** 2) ** 0.5
+            if direction1_norm > 0:
+                robot2_x, robot2_y = robot1_x + direction1_x / direction1_norm * min_distance, robot1_y + direction1_y / direction1_norm * min_distance
+
+        if distance2 > max_distance:
+            direction2_x, direction2_y = robot1_x - robot3_x, robot1_y - robot3_y 
+            direction2_norm = ((direction2_x) ** 2 + (direction2_y) ** 2) ** 0.5
+            if direction2_norm > 0: 
+                robot3_x, robot3_y = robot1_x - direction2_x / direction2_norm * max_distance, robot1_y - direction2_y / direction2_norm * max_distance
+        elif distance2 < min_distance:
+            direction2_x, direction2_y = robot3_x - robot1_x, robot3_y - robot1_y
+            direction2_norm = ((direction2_x) ** 2 + (direction2_y) ** 2) ** 0.5
+            if direction2_norm > 0:
+                robot3_x, robot3_y = robot1_x + direction2_x / direction2_norm * min_distance, robot1_y + direction2_y / direction2_norm * min_distance
+
+        # if distance2 > max_distance:
+        #     direction2_x, direction2_y = robot1_x - robot3_x, robot1_y - robot3_y
+        #     direction2_norm = ((direction2_x) ** 2 + (direction2_y) ** 2) ** 0.5
+        #     robot3_x, robot3_y = robot1_x - direction2_x / direction2_norm * max_distance, robot1_y - direction2_y / direction2_norm * max_distance
+        # elif distance2 < min_distance:
+        #     direction2_x, direction2_y = robot3_x - robot1_x, robot3_y - robot1_y
+        #     direction2_norm = ((direction2_x) ** 2 + (direction2_y) ** 2) ** 0.5
+        #     robot3_x, robot3_y = robot1_x + direction2_x / direction2_norm * min_distance, robot1_y + direction2_y / direction2_norm * min_distance
+
+        # check for collision between robot1 and the other robots
+        distance3 = ((robot1_x - robot2_x) ** 2 + (robot1_y - robot2_y) ** 2) ** 0.5
+        distance4 = ((robot1_x - robot3_x) ** 2 + (robot1_y - robot3_y) ** 2) ** 0.5
+        
+        if distance3 < min_distance:
+            # adjust position of robot1 to move it away from robot2
+            direction3_x, direction3_y = robot1_x - robot2_x, robot1_y - robot2_y
+            direction3_norm = ((direction3_x) ** 2 + (direction3_y) ** 2) ** 0.5
+            if direction3_norm > 0:
+                robot1_x, robot1_y = robot2_x + direction3_x / direction3_norm * min_distance, robot2_y + direction3_y / direction3_norm * min_distance
+
+        if distance4 < min_distance:
+            # adjust position of robot1 to move it away from robot3
+            direction4_x, direction4_y = robot1_x - robot3_x, robot1_y - robot3_y
+            direction4_norm = ((direction4_x) ** 2 + (direction4_y) ** 2) ** 0.5
+            if direction4_norm > 0:
+                robot1_x, robot1_y = robot3_x + direction4_x / direction4_norm * min_distance, robot3_y + direction4_y / direction4_norm * min_distance
+
+        # check for collision between robot2 and robot3
+        distance5 = ((robot2_x - robot3_x) ** 2 + (robot2_y - robot3_y) ** 2) ** 0.5
+        if distance5 < min_distance:
+            # adjust positions of robot2 and robot3 to move them away from each other
+            direction5_x, direction5_y = robot2_x - robot3_x, robot2_y - robot3_y
+            direction5_norm = ((direction5_x) ** 2 + (direction5_y) ** 2) ** 0.5
+            if direction5_norm > 0:
+                robot2_x, robot2_y = robot2_x + direction5_x / direction5_norm * (min_distance - distance5) / 2, robot2_y + direction5_y / direction5_norm * (min_distance - distance5) / 2
+                robot3_x, robot3_y = robot3_x - direction5_x / direction5_norm * (min_distance - distance5) / 2, robot3_y - direction5_y / direction5_norm * (min_distance - distance5) / 2
+
+        # create Odometry messages for each robot
+        robots_odom = [Odometry(), Odometry(), Odometry()]
+
+        for idx, (x, y) in enumerate([(robot1_x, robot1_y), (robot2_x, robot2_y), (robot3_x, robot3_y)]):
+            robots_odom[idx].header.stamp = self.get_clock().now().to_msg()
+            robots_odom[idx].header.frame_id = f'odom_robot{idx+1}'
+            robots_odom[idx].child_frame_id = f'base_link_robot{idx+1}'
+            robots_odom[idx].pose.pose.position.x = float(x)
+            robots_odom[idx].pose.pose.position.y = float(y)
+            robots_odom[idx].pose.pose.position.z = float(0)
+            robots_odom[idx].pose.pose.orientation.x = float(x)
+            robots_odom[idx].pose.pose.orientation.y = float(y)
+            robots_odom[idx].pose.pose.orientation.z = float(0)
+            robots_odom[idx].pose.pose.orientation.w = float(1)
+
+        # publish the updated robot positions as Odometry messages
+        for idx, odom_msg in enumerate(robots_odom):
+            self.publisher[idx].publish(odom_msg)
+
+        return (robot1_x, robot1_y), (robot2_x, robot2_y), (robot3_x, robot3_y)
+    
+
+
+    def timer_callback(self):
+        self.mapImage[:] = (0, 255, 0)
+        self.pub_move_robots(15, 5)
+        cv2.rectangle(self.mapImage, (100,100), (1000,700), (255,255,255), 3) # Garis Luar
+        cv2.rectangle(self.mapImage, (40,530), (100,270), (255,255,255), 3) # Garis Luar Gawang Kiri
+        cv2.rectangle(self.mapImage, (1000,530), (1060,270), (255,255,255), 3) # Garis Luar Gawang Kiri
+        cv2.rectangle(self.mapImage, (100,650), (200,150), (255,255,255), 3) # Garis Luar Gawang Kiri
+        cv2.rectangle(self.mapImage, (900,650), (1000,150), (255,255,255), 3) # Garis Luar Gawang Kiri
+        cv2.line(self.mapImage, (550,100), (550,700), (255,255,255), 3) # Garis Tengah
+        cv2.circle(self.mapImage, (550,400), 75, (255,255,255), 3) # Lingkaran Tengah
+        cv2.circle(self.mapImage, (250,400), 3, (255,255,255), 5)
+        cv2.circle(self.mapImage, (850,400), 3, (255,255,255), 5)
+        cv2.line(self.mapImage, (100,200), (1000,200), (0,0,0), 1)
+        cv2.line(self.mapImage, (100,300), (1000,300), (0,0,0), 1)
+        cv2.line(self.mapImage, (100,400), (1000,400), (0,0,0), 1)
+        cv2.line(self.mapImage, (100,500), (1000,500), (0,0,0), 1)
+        cv2.line(self.mapImage, (100,600), (1000,600), (0,0,0), 1)
+                            
+        cv2.line(self.mapImage, (200,100), (200,700), (0,0,0), 1)
+        cv2.line(self.mapImage, (300,100), (300,700), (0,0,0), 1)
+        cv2.line(self.mapImage, (400,100), (400,700), (0,0,0), 1)
+        cv2.line(self.mapImage, (500,100), (500,700), (0,0,0), 1)
+        cv2.line(self.mapImage, (600,100), (600,700), (0,0,0), 1)
+        cv2.line(self.mapImage, (700,100), (700,700), (0,0,0), 1)
+        cv2.line(self.mapImage, (800,100), (800,700), (0,0,0), 1)
+        cv2.line(self.mapImage, (900,100), (900,700), (0,0,0), 1)
+        x_1, y_1 = self.worldCoorToImageCoor(self.robot_1_PosX+450, self.robot_1_PosY+300)
+        x_2, y_2 = self.worldCoorToImageCoor(self.robot_2_PosX+450, self.robot_2_PosY+300)
+        #x_2, y_2 = self.worldCoorToImageCoor(self.robot_2_PosX_new+450, self.robot_2_PosY_new+300)
+        x_3, y_3 = self.worldCoorToImageCoor(self.robot_3_PosX+450, self.robot_3_PosY+300)
+        #x_3, y_3 = self.worldCoorToImageCoor(self.robot_3_PosX_new+450, self.robot_3_PosY_new+300)
+        x_4, y_4 = self.worldCoorToImageCoor(self.robot_4_PosX+450, self.robot_4_PosY+300)
+        #x_4, y_4 = self.worldCoorToImageCoor(self.robot_4_PosX_new+450, self.robot_4_PosY_new+300)         
+        zed_x, zed_y = self.worldCoorToImageCoor((self.zed_pos_X*self.zed_x_imu)+450, (self.zed_pos_Y*self.zed_y_imu)+300)
+        x_5, y_5 = self.worldCoorToImageCoor(self.robot_5_PosX+450, self.robot_5_PosY+300)
+        
+
+########################## STATUS STRATEGI ROBOT 1 ##########################       
+        robot_1_text = "ROBOT 1 :"
+        robot_1_condition = self.robot_1_strategy
+
+        if robot_1_condition == 0:
+            robot_1_status = "GK"
+        elif robot_1_condition == 1:
+            robot_1_status = "ATTACK"
+        elif robot_1_condition == 2:
+            robot_1_status = "DEF.R"
+        elif robot_1_condition == 3:
+            robot_1_status = "DEF.L"
+        else:
+            robot_1_status = "BINGUNG"
+
+########################## STATUS ROBOT 2 ##########################       
+        robot_2_text = "ROBOT 2 :"
+        robot_2_condition = self.robot_2_strategy
+
+        if robot_2_condition == 0:
+            robot_2_status = "GK"
+        elif robot_2_condition == 1:
+            robot_2_status = "ATTACK"
+        elif robot_2_condition == 2:
+            robot_2_status = "DEF.R"
+        elif robot_2_condition == 3:
+            robot_2_status = "DEF.L"
+        else:
+            robot_2_status = "BINGUNG"
+
+########################## STATUS ROBOT 3 ##########################       
+        robot_3_text = "ROBOT 3 :"
+        robot_3_condition = self.robot_3_strategy
+
+        if robot_3_condition == 0:
+            robot_3_status = "GK"
+        elif robot_3_condition == 1:
+            robot_3_status = "ATTACK"
+        elif robot_3_condition == 2:
+            robot_3_status = "DEF.R"
+        elif robot_3_condition == 3:
+            robot_3_status = "DEF.L"
+        else:
+            robot_3_status = "BINGUNG"
+
+########################## STATUS ROBOT 4 ##########################       
+        robot_4_text = "ROBOT 4 :"
+        robot_4_condition = self.robot_4_strategy
+
+        if robot_4_condition == 0:
+            robot_4_status = "GK"
+        elif robot_4_condition == 1:
+            robot_4_status = "ATTACK"
+        elif robot_4_condition == 2:
+            robot_4_status = "DEF.R"
+        elif robot_4_condition == 3:
+            robot_4_status = "DEF.L"
+        else:
+            robot_4_status = "BINGUNG"
+########################## STATUS ROBOT 5 ##########################       
+        robot_5_text = "ROBOT 5 :"
+        robot_5_condition = self.robot_5_strategy
+
+        if robot_5_condition == 0:
+            robot_5_status = "GK"
+        elif robot_5_condition == 1:
+            robot_5_status = "ATTACK"
+        elif robot_5_condition == 2:
+            robot_5_status = "DEF.R"
+        elif robot_5_condition == 3:
+            robot_5_status = "DEF.L"
+        else:
+            robot_5_status = "BINGUNG"
+
+
+########################### DARI SINI JANGAN DISENTUH/DIUBAH ##################################################
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        fontScale = 0.65
+        color = (0, 0, 0)
+        thickness = 2
+        robot_1_text_size = cv2.getTextSize(robot_1_text, font, fontScale, thickness)
+        robot_1_condition_size = cv2.getTextSize(robot_1_status, font, fontScale, thickness)
+        
+        robot_2_text_size = cv2.getTextSize(robot_2_text, font, fontScale, thickness)
+        robot_2_condition_size = cv2.getTextSize(robot_2_status, font, fontScale, thickness)
+
+        robot_3_text_size = cv2.getTextSize(robot_3_text, font, fontScale, thickness)
+        robot_3_condition_size = cv2.getTextSize(robot_3_status, font, fontScale, thickness)
+
+        robot_4_text_size = cv2.getTextSize(robot_4_text, font, fontScale, thickness)
+        robot_4_condition_size = cv2.getTextSize(robot_4_status, font, fontScale, thickness)
+
+        robot_5_text_size = cv2.getTextSize(robot_5_text, font, fontScale, thickness)
+        robot_5_condition_size = cv2.getTextSize(robot_5_status, font, fontScale, thickness)
+        robot_1_x_text_coordinate = 10
+        robot_1_y_text_coordinate = robot_1_text_size[0][1] + 10
+        robot_1_x_condition = 125
+        robot_1_y_condition = robot_1_text_size[0][1] + 10
+
+        robot_2_x_text_coordinate = 220
+        robot_2_y_text_coordinate = robot_2_text_size[0][1] + 10
+        robot_2_x_condition = 335
+        robot_2_y_condition = robot_2_text_size[0][1] + 10
+
+        robot_3_x_text_coordinate = 220*2
+        robot_3_y_text_coordinate = robot_3_text_size[0][1] + 10
+        robot_3_x_condition = 275*2 + 5
+        robot_3_y_condition = robot_3_text_size[0][1] + 10
+
+        robot_4_x_text_coordinate = 220*3
+        robot_4_y_text_coordinate = robot_4_text_size[0][1] + 10
+        robot_4_x_condition = 775
+        robot_4_y_condition = robot_4_text_size[0][1] + 10
+
+        robot_5_x_text_coordinate = 220*4
+        robot_5_y_text_coordinate = robot_5_text_size[0][1] + 10
+        robot_5_x_condition = 995
+        robot_5_y_condition = robot_5_text_size[0][1] + 10
+        cv2.circle(self.mapImage, (x_1, y_1), 3, (25,25,25), 5)
+        cv2.circle(self.mapImage, (x_2, y_2), 3, (55,55,55), 5)
+        cv2.circle(self.mapImage, (x_3, y_3), 3, (100,100,100), 5)
+        cv2.circle(self.mapImage, (x_4, y_4), 3, (125,125,125), 5)
+        cv2.circle(self.mapImage, (x_5, y_5), 3, (175,175,175), 5)
+        cv2.circle(self.mapImage, (zed_x, zed_y), 3, (0,0,0), 10)
+        cv2.putText(self.mapImage, robot_1_text, (robot_1_x_text_coordinate, robot_1_y_text_coordinate), font, fontScale, color, thickness, cv2.LINE_AA)
+        cv2.putText(self.mapImage, robot_1_status, (robot_1_x_condition, robot_1_y_condition), font, fontScale, color, thickness, cv2.LINE_AA)
+
+        cv2.putText(self.mapImage, robot_2_text, (robot_2_x_text_coordinate, robot_2_y_text_coordinate), font, fontScale, color, thickness, cv2.LINE_AA)
+        cv2.putText(self.mapImage, robot_2_status, (robot_2_x_condition, robot_2_y_condition), font, fontScale, color, thickness, cv2.LINE_AA)
+
+        cv2.putText(self.mapImage, robot_3_text, (robot_3_x_text_coordinate, robot_3_y_text_coordinate), font, fontScale, color, thickness, cv2.LINE_AA)
+        cv2.putText(self.mapImage, robot_3_status, (robot_3_x_condition, robot_3_y_condition), font, fontScale, color, thickness, cv2.LINE_AA)
+
+        cv2.putText(self.mapImage, robot_4_text, (robot_4_x_text_coordinate, robot_4_y_text_coordinate), font, fontScale, color, thickness, cv2.LINE_AA)
+        cv2.putText(self.mapImage, robot_4_status, (robot_4_x_condition, robot_4_y_condition), font, fontScale, color, thickness, cv2.LINE_AA)
+
+        cv2.putText(self.mapImage, robot_5_text, (robot_5_x_text_coordinate, robot_5_y_text_coordinate), font, fontScale, color, thickness, cv2.LINE_AA)
+        cv2.putText(self.mapImage, robot_5_status, (robot_5_x_condition, robot_5_y_condition), font, fontScale, color, thickness, cv2.LINE_AA)
+############################################################### DIATAS JANGAN DISENTUH/DIUBAH #######################################################################
+
+        smallMapImage = cv2.resize(self.mapImage, (1280,720), interpolation = cv2.INTER_AREA)
+        cv2.imshow("Barelang Localization", smallMapImage)
+        cv2.waitKey(1)
+
+        
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = monitor_lokalisasi()
+    rclpy.spin(node)
+    rclpy.shutdown()
+    cv2.destroyAllWindows()
+
+if __name__ == '__main__':
+    main()
